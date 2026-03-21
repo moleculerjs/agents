@@ -24,7 +24,7 @@
 		"test:unit": "vitest --run unit",
 		"test:integration": "vitest --run integration",
 		"ci:unit": "vitest --watch unit",
-		"dev": "nodemon --inspect examples/index.ts",
+		"dev": "nodemon --exec tsx examples/index.ts",
 		"prepack": "npm run build"
 	},
 	"keywords": [
