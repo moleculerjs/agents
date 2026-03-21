@@ -7,11 +7,12 @@
 import { describe, expect, it, afterAll, beforeAll } from "vitest";
 import { ServiceBroker } from "moleculer";
 import AgentMixin from "../../src/agent.mixin.ts";
+import MemoryMixin from "../../src/memory.mixin.ts";
 import LLMService from "../../src/llm.service.ts";
 import FakeAdapter from "../../src/adapters/fake.ts";
 
 describe("AgentMixin E2E", () => {
-	const broker = new ServiceBroker({ logger: false });
+	const broker = new ServiceBroker({ logger: false, cacher: "Memory" });
 
 	beforeAll(() => broker.start());
 	afterAll(() => broker.stop());
@@ -610,6 +611,194 @@ describe("AgentMixin E2E", () => {
 		await broker.call("compact-agent.run", { task: "trigger compact" });
 
 		expect(compactCalled).toBe(true);
+
+		await broker.destroyService(agentSvc);
+		await broker.destroyService(llmSvc);
+	});
+
+	it("should persist history with MemoryMixin across multi-turn chat", async () => {
+		const adapter = new FakeAdapter({
+			responses: ["Hello! How can I help?", "The weather is sunny."]
+		});
+
+		const llmSvc = broker.createService({
+			name: "llm.mem1",
+			mixins: [LLMService()],
+			settings: { adapter }
+		});
+
+		const agentSvc = broker.createService({
+			name: "mem-agent-1",
+			mixins: [MemoryMixin(), AgentMixin()],
+			settings: {
+				agent: {
+					llm: "llm.mem1",
+					description: "Memory agent",
+					instructions: "You are a helpful assistant."
+				}
+			},
+			actions: {
+				getCurrent: {
+					description: "Get weather",
+					params: { city: { type: "string", description: "City" } },
+					async handler() {
+						return { temp: 22 };
+					}
+				}
+			}
+		});
+
+		await broker.waitForServices(["llm.mem1", "mem-agent-1"]);
+
+		// First chat
+		const result1 = await broker.call("mem-agent-1.chat", {
+			message: "Hello",
+			sessionId: "persist-session"
+		});
+		expect(result1).toBe("Hello! How can I help?");
+
+		// Verify history was saved to cacher
+		const saved = await broker.cacher!.get("agent:history:mem-agent-1:persist-session");
+		expect(saved).toBeDefined();
+		expect(Array.isArray(saved)).toBe(true);
+		// Should contain: system + user("Hello") + assistant("Hello! How can I help?")
+		const savedArr = saved as { role: string; content: string }[];
+		expect(savedArr.length).toBe(3);
+		expect(savedArr[0].role).toBe("system");
+		expect(savedArr[1].role).toBe("user");
+		expect(savedArr[1].content).toBe("Hello");
+		expect(savedArr[2].role).toBe("assistant");
+		expect(savedArr[2].content).toBe("Hello! How can I help?");
+
+		// Second chat — should load previous history and append
+		const result2 = await broker.call("mem-agent-1.chat", {
+			message: "What is the weather?",
+			sessionId: "persist-session"
+		});
+		expect(result2).toBe("The weather is sunny.");
+
+		// Verify the full history was saved after the second call
+		const saved2 = await broker.cacher!.get("agent:history:mem-agent-1:persist-session");
+		const savedArr2 = saved2 as { role: string; content: string }[];
+		// system + user(Hello) + assistant(Hello!...) + user(Weather?) + assistant(Sunny.)
+		expect(savedArr2.length).toBe(5);
+		expect(savedArr2[0].role).toBe("system");
+		expect(savedArr2[1].content).toBe("Hello");
+		expect(savedArr2[2].content).toBe("Hello! How can I help?");
+		expect(savedArr2[3].content).toBe("What is the weather?");
+		expect(savedArr2[4].content).toBe("The weather is sunny.");
+
+		await broker.destroyService(agentSvc);
+		await broker.destroyService(llmSvc);
+	});
+
+	it("should trigger compaction with MemoryMixin on long history", async () => {
+		const adapter = new FakeAdapter({ responses: ["compacted reply"] });
+
+		const llmSvc = broker.createService({
+			name: "llm.mem2",
+			mixins: [LLMService()],
+			settings: { adapter }
+		});
+
+		// Pre-populate a long history in the cacher
+		const longHistory = [
+			{ role: "system", content: "instructions" },
+			{ role: "user", content: "u1" },
+			{ role: "assistant", content: "a1" },
+			{ role: "user", content: "u2" },
+			{ role: "assistant", content: "a2" },
+			{ role: "user", content: "u3" },
+			{ role: "assistant", content: "a3" },
+			{ role: "user", content: "u4" },
+			{ role: "assistant", content: "a4" }
+		];
+		await broker.cacher!.set("agent:history:compact-mem-agent:compact-sess", longHistory, 3600);
+
+		const agentSvc = broker.createService({
+			name: "compact-mem-agent",
+			mixins: [MemoryMixin(), AgentMixin()],
+			settings: {
+				agent: {
+					llm: "llm.mem2",
+					description: "Compact memory agent",
+					instructions: "instructions",
+					maxHistoryMessages: 5
+				}
+			},
+			actions: {}
+		});
+
+		await broker.waitForServices(["llm.mem2", "compact-mem-agent"]);
+
+		const result = await broker.call("compact-mem-agent.chat", {
+			message: "new message",
+			sessionId: "compact-sess"
+		});
+		expect(result).toBe("compacted reply");
+
+		// Verify saved history was compacted
+		// 9 existing + 1 new user msg = 10 > maxHistoryMessages=5 → compaction triggered
+		// After compaction: system + last 4 from the 10, then assistant reply appended
+		const saved = await broker.cacher!.get("agent:history:compact-mem-agent:compact-sess");
+		const savedArr = saved as { role: string; content: string }[];
+		// Compacted to 5, then +1 assistant = 6, but compaction happens before LLM call
+		// so saved result is: compacted(5) + assistant("compacted reply") = 6
+		expect(savedArr.length).toBeLessThanOrEqual(6);
+		// System message should be preserved
+		expect(savedArr[0].role).toBe("system");
+		expect(savedArr[0].content).toBe("instructions");
+		// Last message should be the assistant reply
+		expect(savedArr[savedArr.length - 1].role).toBe("assistant");
+		expect(savedArr[savedArr.length - 1].content).toBe("compacted reply");
+		// The new user message should be in the saved history
+		const userMsgs = savedArr.filter(m => m.role === "user" && m.content === "new message");
+		expect(userMsgs.length).toBe(1);
+
+		await broker.destroyService(agentSvc);
+		await broker.destroyService(llmSvc);
+	});
+
+	it("should not duplicate system message on subsequent chats", async () => {
+		const adapter = new FakeAdapter({
+			responses: ["first", "second"]
+		});
+
+		const llmSvc = broker.createService({
+			name: "llm.mem3",
+			mixins: [LLMService()],
+			settings: { adapter }
+		});
+
+		const agentSvc = broker.createService({
+			name: "sysdup-agent",
+			mixins: [MemoryMixin(), AgentMixin()],
+			settings: {
+				agent: {
+					llm: "llm.mem3",
+					description: "System dup test agent",
+					instructions: "Be helpful."
+				}
+			},
+			actions: {}
+		});
+
+		await broker.waitForServices(["llm.mem3", "sysdup-agent"]);
+
+		await broker.call("sysdup-agent.chat", {
+			message: "hi",
+			sessionId: "sysdup-sess"
+		});
+		await broker.call("sysdup-agent.chat", {
+			message: "hello again",
+			sessionId: "sysdup-sess"
+		});
+
+		// Verify the saved history has exactly ONE system message
+		const saved = await broker.cacher!.get("agent:history:sysdup-agent:sysdup-sess");
+		const savedArr = saved as { role: string }[];
+		const systemMsgs = savedArr.filter(m => m.role === "system");
+		expect(systemMsgs).toHaveLength(1);
 
 		await broker.destroyService(agentSvc);
 		await broker.destroyService(llmSvc);
