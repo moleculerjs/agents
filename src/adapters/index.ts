@@ -27,7 +27,7 @@ function resolve(opt?: string | object): BaseAdapter {
 			return opt;
 		}
 
-		const type = opt.type as string;
+		const type = (opt as Record<string, unknown>).type as string;
 		if (type) {
 			const AdapterClass = Adapters[type];
 			if (!AdapterClass) {
