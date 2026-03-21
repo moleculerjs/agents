@@ -389,6 +389,14 @@ describe("OrchestratorMixin E2E", () => {
 
 		expect(routeTool).toBeUndefined();
 
+		// Verify the _routeToAgent action is NOT registered on the service
+		await expect(
+			broker.call("orchestrator-5._routeToAgent", {
+				agentName: "test",
+				task: "test"
+			})
+		).rejects.toThrow();
+
 		await broker.destroyService(orchSvc);
 		await broker.destroyService(llmSvc);
 	});
@@ -462,6 +470,94 @@ describe("OrchestratorMixin E2E", () => {
 
 		await broker.destroyService(newAgent);
 		await broker.destroyService(orchSvc);
+		await broker.destroyService(llmSvc);
+	});
+
+	it("should reject _routeToAgent call with unknown agent name", async () => {
+		const adapter = new FakeAdapter({
+			responses: [
+				{
+					content: null,
+					tool_calls: [
+						{
+							id: "call_bad_agent",
+							type: "function" as const,
+							function: {
+								name: "_routeToAgent",
+								arguments: JSON.stringify({
+									agentName: "non-existent-agent",
+									task: "Do something"
+								})
+							}
+						}
+					]
+				},
+				"Sorry, I could not find that agent."
+			]
+		});
+
+		const llmSvc = broker.createService({
+			name: "llm.orch7",
+			mixins: [LLMService()],
+			settings: { adapter }
+		});
+
+		const realAgent = broker.createService({
+			name: "real-agent",
+			mixins: [AgentMixin()],
+			settings: {
+				agent: {
+					llm: "llm.orch7",
+					description: "A real agent"
+				}
+			},
+			actions: {
+				doWork: {
+					description: "Do some work",
+					params: {},
+					async handler() {
+						return "done";
+					}
+				}
+			}
+		});
+
+		const orchSvc = broker.createService({
+			name: "orchestrator-7",
+			mixins: [OrchestratorMixin(), AgentMixin()],
+			settings: {
+				agent: {
+					llm: "llm.orch7",
+					description: "Validating orchestrator",
+					strategy: "llm-router"
+				}
+			},
+			actions: {}
+		});
+
+		await broker.waitForServices(["llm.orch7", "real-agent", "orchestrator-7"]);
+
+		// Trigger discovery
+		broker.broadcastLocal("$services.changed");
+
+		const result = await broker.call("orchestrator-7.run", {
+			task: "Route to unknown agent"
+		});
+
+		expect(result).toBe("Sorry, I could not find that agent.");
+
+		// Verify error was sent back as tool result
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const internalAdapter = (llmSvc as any)._adapter as FakeAdapter;
+		const secondCall = internalAdapter.calls[1];
+		const toolMsg = (secondCall.messages as { role: string; content: string }[]).find(
+			m => m.role === "tool"
+		);
+		expect(toolMsg).toBeDefined();
+		expect(toolMsg!.content).toContain("Agent not found: non-existent-agent");
+
+		await broker.destroyService(orchSvc);
+		await broker.destroyService(realAgent);
 		await broker.destroyService(llmSvc);
 	});
 });

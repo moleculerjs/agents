@@ -19,6 +19,36 @@ export default function OrchestratorMixin(_mixinOpts?: OrchestratorMixinOptions)
 	_mixinOpts = _.defaultsDeep(_mixinOpts, {});
 
 	const schema = {
+		merged(this: ServiceInstance, schema: Record<string, unknown>) {
+			const settings = schema.settings as Record<string, unknown> | undefined;
+			const agent = settings?.agent as Record<string, unknown> | undefined;
+			if (agent?.strategy === "llm-router") {
+				const actions = (schema.actions || {}) as Record<string, unknown>;
+				actions._routeToAgent = {
+					description: "Route a task to a discovered agent",
+					visibility: "protected",
+					params: {
+						agentName: { type: "string" },
+						task: { type: "string" }
+					},
+					async handler(this: ServiceInstance, ctx: ServiceInstance) {
+						const agents = this.discoverAgents();
+						if (
+							!agents.some(
+								(a: DiscoveredAgent) => a.name === ctx.params.agentName
+							)
+						) {
+							throw new Error(
+								`Agent not found: ${ctx.params.agentName}`
+							);
+						}
+						return this.delegateTo(ctx.params.agentName, ctx.params.task);
+					}
+				};
+				schema.actions = actions;
+			}
+		},
+
 		events: {
 			"$services.changed"(this: ServiceInstance) {
 				if (this.settings.agent?.strategy === "llm-router") {
@@ -123,19 +153,6 @@ export default function OrchestratorMixin(_mixinOpts?: OrchestratorMixinOptions)
 						}
 					}
 				});
-			}
-		},
-
-		actions: {
-			_routeToAgent: {
-				visibility: "private",
-				params: {
-					agentName: { type: "string" },
-					task: { type: "string" }
-				},
-				async handler(this: ServiceInstance, ctx: ServiceInstance) {
-					return this.delegateTo(ctx.params.agentName, ctx.params.task);
-				}
 			}
 		},
 
