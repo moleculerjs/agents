@@ -5,10 +5,16 @@
  */
 
 import BaseAdapter from "./base.ts";
+import OpenAIAdapter from "./openai.ts";
+import AnthropicAdapter from "./anthropic.ts";
+import FakeAdapter from "./fake.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Adapters: Record<string, any> = {
-	Base: BaseAdapter
+	Base: BaseAdapter,
+	OpenAI: OpenAIAdapter,
+	Anthropic: AnthropicAdapter,
+	Fake: FakeAdapter
 };
 
 function resolve(opt?: string | object): BaseAdapter {
