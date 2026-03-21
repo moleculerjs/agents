@@ -35,3 +35,9 @@ export interface ToolSchema {
 	description: string;
 	params: Record<string, unknown>;
 }
+
+export interface DiscoveredAgent {
+	name: string;
+	description: string;
+	actions: string[];
+}

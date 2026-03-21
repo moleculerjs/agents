@@ -179,6 +179,86 @@ await broker.call("assistant.chat", { message: "What did I just say?", sessionId
 await broker.call("assistant.chat", { message: "Hello!", sessionId: "user-b" });
 ```
 
+## Multi-Agent Orchestration
+
+Use `OrchestratorMixin` to coordinate multiple agent services. An orchestrator can discover other agents and delegate tasks to them.
+
+### Direct Strategy
+
+The orchestrator's own actions explicitly call `delegateTo()` to route tasks:
+
+```typescript
+import { AgentMixin, OrchestratorMixin } from "@moleculer/agents";
+
+export default {
+  name: "trip-planner",
+  mixins: [OrchestratorMixin(), AgentMixin()],
+
+  settings: {
+    agent: {
+      description: "Trip planner orchestrator",
+      instructions: "Plan trips by coordinating weather and hotel agents.",
+      llm: "llm.openai",
+      strategy: "direct"
+    }
+  },
+
+  actions: {
+    planTrip: {
+      description: "Plan a complete trip",
+      params: {
+        destination: { type: "string", description: "Destination city" },
+        days: { type: "number", description: "Number of days" }
+      },
+      async handler(ctx) {
+        const [weather, hotels] = await Promise.all([
+          this.delegateTo("weather-agent", `Weather in ${ctx.params.destination} for ${ctx.params.days} days`),
+          this.delegateTo("hotel-agent", `Hotels in ${ctx.params.destination} for ${ctx.params.days} nights`)
+        ]);
+        return `Weather: ${weather}\nHotels: ${hotels}`;
+      }
+    }
+  }
+};
+```
+
+### LLM-Router Strategy
+
+The LLM decides which agent to delegate to. A `_routeToAgent` tool is automatically generated with the list of discovered agents:
+
+```typescript
+export default {
+  name: "smart-router",
+  mixins: [OrchestratorMixin(), AgentMixin()],
+
+  settings: {
+    agent: {
+      description: "Smart task router",
+      instructions: "Route tasks to the most appropriate agent.",
+      llm: "llm.openai",
+      strategy: "llm-router"
+    }
+  }
+};
+```
+
+### Agent Discovery
+
+The `discoverAgents()` method queries the Moleculer service registry for all agent services:
+
+```typescript
+const agents = this.discoverAgents();
+// [{ name: "weather-agent", description: "Weather assistant", actions: ["getCurrent", "getForecast"] }]
+```
+
+### Delegation
+
+The `delegateTo()` method calls another agent's `run` action:
+
+```typescript
+const result = await this.delegateTo("weather-agent", "What's the weather in Paris?");
+```
+
 ## LLM Adapters
 
 ### OpenAI (+ compatible APIs)
@@ -370,6 +450,9 @@ npx tsx examples/simple-agent.ts
 
 # Multi-turn chat with conversation memory
 npx tsx examples/multi-turn-chat.ts
+
+# Multi-agent orchestration
+npx tsx examples/orchestrator.ts
 ```
 
 ## Development

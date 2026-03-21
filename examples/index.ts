@@ -12,7 +12,8 @@ const example = process.argv[2] || "simple";
 
 const examples: Record<string, string> = {
 	simple: "./simple-agent.ts",
-	"multi-turn": "./multi-turn-chat.ts"
+	"multi-turn": "./multi-turn-chat.ts",
+	orchestrator: "./orchestrator.ts"
 };
 
 const file = examples[example];
