@@ -22,15 +22,17 @@ describe("Test FakeAdapter", () => {
 	});
 
 	describe("chat", () => {
+		const msgs = [{ role: "user", content: "Hi" }];
+
 		it("should return null content when no responses configured", async () => {
 			const adapter = new FakeAdapter();
-			const result = await adapter.chat();
+			const result = await adapter.chat(msgs);
 			expect(result).toEqual({ content: null, finish_reason: "stop" });
 		});
 
 		it("should return string response as LLMResponse", async () => {
 			const adapter = new FakeAdapter({ responses: ["Hello!"] });
-			const result = await adapter.chat();
+			const result = await adapter.chat(msgs);
 			expect(result).toEqual({ content: "Hello!", finish_reason: "stop" });
 		});
 
@@ -39,17 +41,17 @@ describe("Test FakeAdapter", () => {
 				responses: ["first", "second", "third"]
 			});
 
-			const r1 = await adapter.chat();
+			const r1 = await adapter.chat(msgs);
 			expect(r1.content).toBe("first");
 
-			const r2 = await adapter.chat();
+			const r2 = await adapter.chat(msgs);
 			expect(r2.content).toBe("second");
 
-			const r3 = await adapter.chat();
+			const r3 = await adapter.chat(msgs);
 			expect(r3.content).toBe("third");
 
 			// Round-robin: back to first
-			const r4 = await adapter.chat();
+			const r4 = await adapter.chat(msgs);
 			expect(r4.content).toBe("first");
 		});
 
@@ -69,7 +71,7 @@ describe("Test FakeAdapter", () => {
 			};
 
 			const adapter = new FakeAdapter({ responses: [toolCallResponse] });
-			const result = await adapter.chat();
+			const result = await adapter.chat(msgs);
 
 			expect(result.finish_reason).toBe("tool_calls");
 			expect(result.tool_calls).toHaveLength(1);
@@ -81,7 +83,7 @@ describe("Test FakeAdapter", () => {
 				responses: [{ content: "Done!", finish_reason: "stop" as const }]
 			});
 
-			const result = await adapter.chat();
+			const result = await adapter.chat(msgs);
 			expect(result).toEqual({ content: "Done!", finish_reason: "stop" });
 		});
 
@@ -104,10 +106,10 @@ describe("Test FakeAdapter", () => {
 				responses: [toolCall, "Final answer"]
 			});
 
-			const r1 = await adapter.chat();
+			const r1 = await adapter.chat(msgs);
 			expect(r1.finish_reason).toBe("tool_calls");
 
-			const r2 = await adapter.chat();
+			const r2 = await adapter.chat(msgs);
 			expect(r2).toEqual({ content: "Final answer", finish_reason: "stop" });
 		});
 
@@ -126,8 +128,39 @@ describe("Test FakeAdapter", () => {
 				]
 			});
 
-			const result = await adapter.chat();
+			const result = await adapter.chat(msgs);
 			expect(result.content).toBeNull();
+		});
+	});
+
+	describe("call recording", () => {
+		it("should start with empty calls array", () => {
+			const adapter = new FakeAdapter({ responses: ["hello"] });
+			expect(adapter.calls).toEqual([]);
+		});
+
+		it("should record messages and tools for each chat call", async () => {
+			const adapter = new FakeAdapter({ responses: ["r1", "r2"] });
+			const msgs1 = [{ role: "user", content: "Hi" }];
+			const msgs2 = [{ role: "user", content: "Bye" }];
+			const tools = [{ type: "function", function: { name: "test" } }];
+
+			await adapter.chat(msgs1);
+			await adapter.chat(msgs2, tools);
+
+			expect(adapter.calls).toHaveLength(2);
+			expect(adapter.calls[0]).toEqual({ messages: msgs1, tools: undefined });
+			expect(adapter.calls[1]).toEqual({ messages: msgs2, tools });
+		});
+
+		it("should record calls even with no responses", async () => {
+			const adapter = new FakeAdapter();
+			const msgs = [{ role: "user", content: "test" }];
+
+			await adapter.chat(msgs);
+
+			expect(adapter.calls).toHaveLength(1);
+			expect(adapter.calls[0].messages).toBe(msgs);
 		});
 	});
 

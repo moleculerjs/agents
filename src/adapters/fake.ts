@@ -15,6 +15,7 @@ interface FakeAdapterOptions {
 export default class FakeAdapter extends BaseAdapter {
 	private _responses: (string | Partial<LLMResponse>)[];
 	private _callIndex: number;
+	calls: Array<{ messages: unknown[]; tools?: unknown[] }> = [];
 
 	constructor(opts?: FakeAdapterOptions) {
 		super(opts as Record<string, unknown>);
@@ -22,7 +23,8 @@ export default class FakeAdapter extends BaseAdapter {
 		this._callIndex = 0;
 	}
 
-	async chat(): Promise<LLMResponse> {
+	async chat(messages: unknown[], tools?: unknown[]): Promise<LLMResponse> {
+		this.calls.push({ messages, tools });
 		if (this._responses.length === 0) {
 			return { content: null, finish_reason: "stop" };
 		}
