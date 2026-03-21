@@ -22,18 +22,37 @@ const broker = new ServiceBroker({
 	}
 });
 
-// --- 2. LLM service for sub-agents ---
-const { adapter: subAdapter } = createAdapter({
+// --- 2. Single LLM service (auto adapter detection) ---
+const { adapter } = createAdapter({
 	fakeResponses: [
+		// 1) Orchestrator LLM call → decides to call planTrip tool
+		{
+			content: null,
+			finish_reason: "tool_calls" as const,
+			tool_calls: [
+				{
+					id: "call_1",
+					type: "function" as const,
+					function: {
+						name: "planTrip",
+						arguments: JSON.stringify({ destination: "Paris", days: 3 })
+					}
+				}
+			]
+		},
+		// 2) Weather sub-agent LLM call → direct text response
 		"Sunny, 25°C in Paris for the next 3 days.",
-		"42"
+		// 3) Calculator sub-agent LLM call → direct text response
+		"42",
+		// 4) Orchestrator LLM call → final answer after tool result
+		"Your trip to Paris is planned! Weather: Sunny, 25°C. Budget estimate: 42 EUR/day. Enjoy your 3-day trip!"
 	]
 });
 
 broker.createService({
-	name: "llm.sub",
+	name: "llm",
 	mixins: [LLMService()],
-	settings: { adapter: subAdapter }
+	settings: { adapter }
 });
 
 // --- 3. Sub-agent: weather ---
@@ -44,7 +63,7 @@ broker.createService({
 		agent: {
 			description: "Weather assistant — current weather and forecasts",
 			instructions: "Help users with weather questions. Be concise.",
-			llm: "llm.sub"
+			llm: "llm"
 		}
 	},
 	actions: {
@@ -69,7 +88,7 @@ broker.createService({
 		agent: {
 			description: "Calculator — performs arithmetic operations",
 			instructions: "Perform calculations accurately.",
-			llm: "llm.sub"
+			llm: "llm"
 		}
 	},
 	actions: {
@@ -87,36 +106,7 @@ broker.createService({
 	}
 });
 
-// --- 5. Orchestrator LLM ---
-const { adapter: orchAdapter } = createAdapter({
-	fakeResponses: [
-		// LLM decides to call planTrip tool
-		{
-			content: null,
-			finish_reason: "tool_calls" as const,
-			tool_calls: [
-				{
-					id: "call_1",
-					type: "function" as const,
-					function: {
-						name: "planTrip",
-						arguments: JSON.stringify({ destination: "Paris", days: 3 })
-					}
-				}
-			]
-		},
-		// LLM returns final answer
-		"Your trip to Paris is planned! Weather: Sunny, 25°C. Enjoy your 3-day trip!"
-	]
-});
-
-broker.createService({
-	name: "llm.orch",
-	mixins: [LLMService()],
-	settings: { adapter: orchAdapter }
-});
-
-// --- 6. Orchestrator service (direct strategy) ---
+// --- 5. Orchestrator service (direct strategy) ---
 broker.createService({
 	name: "trip-planner",
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -125,7 +115,7 @@ broker.createService({
 		agent: {
 			description: "Trip planner — coordinates weather and calculation agents",
 			instructions: "Plan trips by delegating to weather and calculator agents.",
-			llm: "llm.orch",
+			llm: "llm",
 			strategy: "direct"
 		}
 	},
@@ -141,25 +131,31 @@ broker.createService({
 				console.log(
 					`  [trip-planner] planTrip("${ctx.params.destination}", ${ctx.params.days})`
 				);
-				const weather = await this.delegateTo(
-					"weather-agent",
-					`Weather in ${ctx.params.destination} for ${ctx.params.days} days`
-				);
-				return `Weather: ${weather}`;
+				const [weather, budget] = await Promise.all([
+					this.delegateTo(
+						"weather-agent",
+						`Weather in ${ctx.params.destination} for ${ctx.params.days} days`
+					),
+					this.delegateTo(
+						"calculator-agent",
+						`Calculate daily budget for ${ctx.params.days} days in ${ctx.params.destination}`
+					)
+				]);
+				return `Weather: ${weather}\nBudget: ${budget}`;
 			}
 		}
 	}
 });
 
-// --- 7. Start and run ---
+// --- 6. Start and run ---
 async function main() {
 	await broker.start();
 
 	console.log("\n--- Discovering agents ---\n");
 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const services = (broker as any).getLocalService("trip-planner");
-	const agents = services.discoverAgents();
+	const service = (broker as any).getLocalService("trip-planner");
+	const agents = service.discoverAgents();
 	console.log("Discovered agents:", JSON.stringify(agents, null, 2));
 
 	console.log("\n--- Running orchestrator ---\n");
