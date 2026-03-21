@@ -183,6 +183,12 @@ await broker.call("assistant.chat", { message: "Hello!", sessionId: "user-b" });
 
 Use `OrchestratorMixin` to coordinate multiple agent services. An orchestrator can discover other agents and delegate tasks to them.
 
+### How It Works
+
+![Orchestrator Flow](docs/orchestrator-flow.png)
+
+The orchestrator delegates tasks to sub-agents via `delegateTo()`. Each sub-agent runs its own ReAct loop independently. Results flow back to the orchestrator, which feeds them to the LLM for a final synthesized response.
+
 ### Direct Strategy
 
 The orchestrator's own actions explicitly call `delegateTo()` to route tasks:
