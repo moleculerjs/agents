@@ -90,7 +90,14 @@ export default function AgentMixin(mixinOpts?: AgentMixinOptions) {
 				for (let i = 0; i < maxIterations; i++) {
 					// Compact if needed
 					if (history.length > maxHistoryMessages) {
+						const prevLen = history.length;
 						history = await this.compactConversation(history);
+						if (history.length >= prevLen) {
+							this.logger.warn("Compaction did not reduce history size", {
+								before: prevLen,
+								after: history.length
+							});
+						}
 					}
 
 					// Call LLM
@@ -160,10 +167,25 @@ export default function AgentMixin(mixinOpts?: AgentMixinOptions) {
 									typeof result === "string" ? result : JSON.stringify(result)
 							});
 						}
+						continue;
+					}
+
+					// Unknown finish_reason
+					this.logger.warn("Unknown finish_reason from LLM", {
+						finish_reason: llmResponse.finish_reason
+					});
+					if (llmResponse.content) {
+						history.push({
+							role: "assistant",
+							content: llmResponse.content
+						});
+						await this.saveHistory(sessionId, history);
+						return llmResponse.content;
 					}
 				}
 
-				// (7) Max iterations exceeded
+				// (7) Max iterations exceeded — save history before throwing
+				await this.saveHistory(sessionId, history);
 				throw new Error("Max iterations reached");
 			},
 
