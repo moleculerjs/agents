@@ -4,7 +4,10 @@
  * Priority: OPENAI_API_KEY > ANTHROPIC_API_KEY > FakeAdapter
  */
 
-import { Adapters } from "../../src/index.ts";
+import BaseAdapter from "../../src/adapters/base.ts";
+import OpenAIAdapter from "../../src/adapters/openai.ts";
+import AnthropicAdapter from "../../src/adapters/anthropic.ts";
+import FakeAdapter from "../../src/adapters/fake.ts";
 import type { LLMResponse } from "../../src/types.ts";
 
 interface CreateAdapterOptions {
@@ -12,11 +15,16 @@ interface CreateAdapterOptions {
 	fakeResponses: (string | Partial<LLMResponse>)[];
 }
 
-export function createAdapter(opts: CreateAdapterOptions) {
+interface CreateAdapterResult {
+	adapter: BaseAdapter;
+	isFake: boolean;
+}
+
+export function createAdapter(opts: CreateAdapterOptions): CreateAdapterResult {
 	if (process.env.OPENAI_API_KEY) {
 		console.log("[Using OpenAI adapter]\n");
 		return {
-			adapter: new Adapters.OpenAI({
+			adapter: new OpenAIAdapter({
 				apiKey: process.env.OPENAI_API_KEY,
 				model: process.env.OPENAI_MODEL || "gpt-4o"
 			}),
@@ -27,7 +35,7 @@ export function createAdapter(opts: CreateAdapterOptions) {
 	if (process.env.ANTHROPIC_API_KEY) {
 		console.log("[Using Anthropic adapter]\n");
 		return {
-			adapter: new Adapters.Anthropic({
+			adapter: new AnthropicAdapter({
 				apiKey: process.env.ANTHROPIC_API_KEY,
 				model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514"
 			}),
@@ -37,7 +45,7 @@ export function createAdapter(opts: CreateAdapterOptions) {
 
 	console.log("[No API key found — using FakeAdapter with scripted responses]\n");
 	return {
-		adapter: new Adapters.Fake({ responses: opts.fakeResponses }),
+		adapter: new FakeAdapter({ responses: opts.fakeResponses }),
 		isFake: true
 	};
 }
