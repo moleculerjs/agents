@@ -8,7 +8,6 @@ import { describe, expect, it, vi } from "vitest";
 import { moleculerParamsToJsonSchema } from "../../src/schema-converter.ts";
 
 describe("moleculerParamsToJsonSchema", () => {
-
 	it("should convert string param", () => {
 		const result = moleculerParamsToJsonSchema({
 			name: { type: "string", description: "User name" }
@@ -158,16 +157,16 @@ describe("moleculerParamsToJsonSchema", () => {
 
 	it("should skip unknown types with warning", () => {
 		const logger = { warn: vi.fn() };
-		const result = moleculerParamsToJsonSchema({
-			name: { type: "string" },
-			weird: { type: "customType" }
-		}, logger);
+		const result = moleculerParamsToJsonSchema(
+			{
+				name: { type: "string" },
+				weird: { type: "customType" }
+			},
+			logger
+		);
 		expect(result.properties).not.toHaveProperty("weird");
 		expect(result.properties).toHaveProperty("name");
-		expect(logger.warn).toHaveBeenCalledWith(
-			"Unsupported param type",
-			{ type: "customType" }
-		);
+		expect(logger.warn).toHaveBeenCalledWith("Unsupported param type", { type: "customType" });
 	});
 
 	it("should handle shorthand string type", () => {
