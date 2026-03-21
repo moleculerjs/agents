@@ -1,0 +1,13 @@
+# Tests, docs & config
+test/
+examples/
+docs/
+coverage/
+.github/
+CLAUDE.md
+PRD.md
+PRD-phase2.md
+tsconfig*.json
+vitest.config.ts
+eslint.config.mjs
+.prettierrc.json
