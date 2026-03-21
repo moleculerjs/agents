@@ -4,9 +4,11 @@
 
 An npm package that adds AI agent capabilities to the [Moleculer](https://moleculer.services) microservices framework. It leverages the structural similarity between Moleculer action definitions and LLM tool definitions to enable automatic conversion — any Moleculer service can become an AI agent with minimal code.
 
+**Target Moleculer version:** `0.15.0-beta` (latest beta)
+
 **Core insight:** A Moleculer action's `params` definition is structurally identical to an LLM tool definition. Adding a `description` field to an action is enough to make it available as an AI tool.
 
-```javascript
+```typescript
 // Moleculer action — already exists in any Moleculer service
 actions: {
   getWeather: {
@@ -102,31 +104,29 @@ The `description` field on both actions and individual params is critical — it
 
 ### 2. LLM Adapters — Provider abstraction
 
-LLM providers are implemented as **adapters** (not separate services). Following the Moleculer adapter pattern (see `@moleculer/channels`, `@moleculer/database`):
+LLM providers are implemented as **adapters** (not separate services). Following the Moleculer adapter pattern (see `@moleculer/channels`, `@moleculer/workflows`):
 
-- Base adapter class with abstract methods: `chat(messages, tools)`, `convertToolSchema(moleculerSchema)`, etc.
+- Abstract base adapter class with methods: `chat(messages, tools)`, `convertToolSchema(moleculerSchema)`, etc.
 - Each provider adapter handles:
   1. Converting fastest-validator schemas to the provider's tool format
   2. Making the API call
   3. Converting the response back to **OpenAI format** (the internal standard)
-- Provider SDK packages are **devDependencies** — lazy-loaded with `require()` in `init()`, with `broker.fatal()` if missing
+- Provider SDK packages are **devDependencies** — dynamically imported in `init()`, with `broker.fatal()` if missing
 
 **Internal response format (OpenAI standard):**
 All adapters must return responses normalized to OpenAI's format:
-```javascript
-{
-  content: "text response" | null,
-  finish_reason: "stop" | "tool_calls",
-  tool_calls: [
-    {
-      id: "call_xxx",
-      type: "function",
-      function: {
-        name: "actionName",
-        arguments: '{"param": "value"}'  // JSON string
-      }
-    }
-  ]
+```typescript
+interface LLMResponse {
+  content: string | null;
+  finish_reason: "stop" | "tool_calls";
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: {
+      name: string;
+      arguments: string;  // JSON string
+    };
+  }>;
 }
 ```
 
@@ -136,18 +136,23 @@ All adapters must return responses normalized to OpenAI's format:
 - `FakeAdapter` — For testing: returns predefined responses, simulates tool calls
 
 **Adapter registry pattern:**
-```javascript
-// src/adapters/index.js
+```typescript
+// src/adapters/index.ts
+import BaseAdapter from "./base.ts";
+import OpenAIAdapter from "./openai.ts";
+import AnthropicAdapter from "./anthropic.ts";
+import FakeAdapter from "./fake.ts";
+
 const Adapters = {
-  Base: require("./base"),
-  OpenAI: require("./openai"),
-  Anthropic: require("./anthropic"),
-  Fake: require("./fake")
+  Base: BaseAdapter,
+  OpenAI: OpenAIAdapter,
+  Anthropic: AnthropicAdapter,
+  Fake: FakeAdapter
 };
 
-function resolve(opt) { /* ... */ }
-function register(name, value) { Adapters[name] = value; }
-module.exports = Object.assign(Adapters, { resolve, register });
+function resolve(opt?: string | object): BaseAdapter { /* ... */ }
+function register(name: string, value: typeof BaseAdapter) { Adapters[name] = value; }
+export default Object.assign(Adapters, { resolve, register });
 ```
 
 ### 3. `MemoryMixin` — Conversation history
@@ -167,7 +172,7 @@ The `compactConversation(history)` method is called before each LLM call when hi
 
 **Extensible:** Developers can override `compactConversation()` with a custom mixin for smarter strategies (LLM summarization, token counting, etc.). We may provide additional compaction mixins in the future.
 
-### 5. `OrchestratorMixin` — Multi-agent coordination
+### 5. `OrchestratorMixin` — Multi-agent coordination (NOT in Phase 1)
 
 Enables a service to discover and delegate tasks to other agent services.
 
@@ -177,21 +182,20 @@ Enables a service to discover and delegate tasks to other agent services.
 - Returns: `[{ name, description, actions }]`
 
 **Routing strategies:**
-- `strategy: "direct"` — Developer explicitly calls `this.delegateTo("agent-name", task)`. Zero overhead, works for most use cases where the orchestrator knows which sub-agent to call.
-- `strategy: "llm-router"` — Sends the task + available agents list to the LLM, which decides which agent to use. More flexible but costs an extra LLM call. Opt-in.
-
-**`delegateTo(agentName, task, sessionId)` method:**
-- Calls `broker.call(\`${agentName}.run\`, { task, sessionId })`
+- `strategy: "direct"` — Developer explicitly calls `this.delegateTo("agent-name", task)`. Zero overhead.
+- `strategy: "llm-router"` — LLM decides which agent to use. Opt-in.
 
 ### 6. `LLMService` — Service wrapper for LLM adapters
 
-A standard Moleculer service that wraps an LLM adapter and exposes it as broker-callable actions:
+A standard Moleculer service mixin that wraps an LLM adapter and exposes it as broker-callable actions:
 
-```javascript
+```typescript
 // Usage: the developer creates a service like this
-module.exports = {
+import { LLMService } from "@moleculer/agents";
+
+export default {
   name: "llm.openai",
-  mixins: [LLMService],
+  mixins: [LLMService()],
   settings: {
     adapter: "OpenAI",  // or new OpenAIAdapter({...})
     apiKey: process.env.OPENAI_API_KEY,
@@ -208,12 +212,12 @@ The `LLMService` mixin exposes:
 
 ## Full example — Weather agent service
 
-```javascript
-const { AgentMixin, MemoryMixin } = require("@moleculer/agents");
+```typescript
+import { AgentMixin, MemoryMixin } from "@moleculer/agents";
 
-module.exports = {
+export default {
   name: "weather-agent",
-  mixins: [AgentMixin, MemoryMixin],
+  mixins: [AgentMixin(), MemoryMixin()],
 
   settings: {
     agent: {
@@ -255,96 +259,50 @@ module.exports = {
 };
 ```
 
-## Full example — Orchestrator service
-
-```javascript
-const { AgentMixin, MemoryMixin, OrchestratorMixin } = require("@moleculer/agents");
-
-module.exports = {
-  name: "trip-planner",
-  mixins: [AgentMixin, MemoryMixin, OrchestratorMixin],
-
-  settings: {
-    agent: {
-      description: "Trip planner — coordinates weather, hotel, and transport agents",
-      instructions: `You are a trip planning orchestrator.
-        Coordinate specialized agents (weather-agent, hotel-agent, transport-agent)
-        to create comprehensive travel plans.`,
-      llm: "llm.openai",
-      strategy: "direct"       // Explicit agent delegation (no extra LLM call)
-    }
-  },
-
-  actions: {
-    planTrip: {
-      description: "Create a complete travel plan",
-      params: {
-        destination: { type: "string", description: "Travel destination" },
-        startDate: { type: "string", description: "Start date (YYYY-MM-DD)" },
-        days: { type: "number", description: "Number of days" }
-      },
-      async handler(ctx) {
-        const { destination, startDate, days } = ctx.params;
-
-        // Call sub-agents in parallel
-        const [weather, hotels, transport] = await Promise.all([
-          this.delegateTo("weather-agent",
-            `Weather in ${destination} from ${startDate} for ${days} days`),
-          this.delegateTo("hotel-agent",
-            `Hotels in ${destination} from ${startDate} for ${days} nights`),
-          this.delegateTo("transport-agent",
-            `Transport options to ${destination}`)
-        ]);
-
-        // Synthesize results
-        return await this.runReActLoop(
-          `Synthesize these results into a single travel plan:\n\n` +
-          `Weather: ${weather}\nHotel: ${hotels}\nTransport: ${transport}`
-        );
-      }
-    }
-  }
-};
-```
-
 ## Project structure
 
 ```
 src/
-  index.js              # Public API exports: { AgentMixin, MemoryMixin, OrchestratorMixin, LLMService, Adapters }
-  agent.mixin.js         # AgentMixin — ReAct loop, tool schema extraction, run/chat actions
-  memory.mixin.js        # MemoryMixin — conversation history via Moleculer cacher
-  orchestrator.mixin.js  # OrchestratorMixin — agent discovery + delegation
-  llm.service.js         # LLMService mixin — wraps adapter as Moleculer service
-  schema-converter.js    # fastest-validator params → provider-neutral intermediate format
+  index.ts              # Public API exports: { AgentMixin, MemoryMixin, LLMService, Adapters }
+  types.ts              # Shared interfaces and types (LLMResponse, AgentSettings, etc.)
+  agent.mixin.ts        # AgentMixin — ReAct loop, tool schema extraction, run/chat actions
+  memory.mixin.ts       # MemoryMixin — conversation history via Moleculer cacher
+  llm.service.ts        # LLMService mixin — wraps adapter as Moleculer service
+  schema-converter.ts   # fastest-validator params → JSON Schema converter
   adapters/
-    index.js             # Adapter registry (resolve, register)
-    base.js              # BaseAdapter — abstract class, defines interface
-    openai.js            # OpenAIAdapter — OpenAI API + compatible providers
-    anthropic.js         # AnthropicAdapter — Anthropic Claude API
-    fake.js              # FakeAdapter — deterministic responses for testing
+    index.ts            # Adapter registry (resolve, register)
+    base.ts             # BaseAdapter — abstract class, defines interface
+    openai.ts           # OpenAIAdapter — OpenAI API + compatible providers
+    anthropic.ts        # AnthropicAdapter — Anthropic Claude API
+    fake.ts             # FakeAdapter — deterministic responses for testing
 test/
   unit/
-    agent.mixin.spec.js
-    memory.mixin.spec.js
-    orchestrator.mixin.spec.js
-    schema-converter.spec.js
+    agent.mixin.spec.ts
+    memory.mixin.spec.ts
+    schema-converter.spec.ts
     adapters/
-      openai.spec.js
-      anthropic.spec.js
-      fake.spec.js
+      openai.spec.ts
+      anthropic.spec.ts
+      fake.spec.ts
   integration/
-    weather-agent.test.js    # Full agent flow with FakeAdapter
-    orchestrator.test.js     # Multi-agent orchestration test
+    agent-flow.test.ts     # Full agent flow with FakeAdapter
 ```
 
-## Coding conventions (Moleculer standard)
+## Coding conventions
 
-These are mandatory — all code MUST follow these conventions exactly:
+These are mandatory — all code MUST follow these conventions exactly. The project follows the same patterns as `moleculerjs/workflows`.
 
-### Formatting
+### Language & Module System
+- **TypeScript** — all source files are `.ts`
+- **ES Modules** — use `import`/`export`, NOT `require`/`module.exports`
+- **Explicit `.ts` extensions in imports**: `import Foo from "./foo.ts"` (required for ESM + node16 module resolution)
+- **Type-only imports** where applicable: `import type { Foo } from "./types.ts"`
+- **Dual build output**: CJS + ESM + type declarations (handled by tsconfig)
+- **`strict: false`** in tsconfig (matching Moleculer convention)
+
+### Formatting (enforced by Prettier)
 - **Tabs** for indentation (tab width: 4 spaces visual)
-- **Double quotes** for strings (`"use strict"`, not `'use strict'`)
+- **Double quotes** for strings (`"hello"`, not `'hello'`)
 - **Semicolons** required at end of every statement
 - **Max line width:** 100 characters
 - **No trailing commas** in arrays/objects
@@ -353,71 +311,119 @@ These are mandatory — all code MUST follow these conventions exactly:
 
 ### Naming
 - `camelCase` for variables and functions: `getAdapter()`, `toolSchemas`
-- `PascalCase` for classes: `BaseAdapter`, `OpenAIAdapter`
+- `PascalCase` for classes and interfaces/types: `BaseAdapter`, `OpenAIAdapter`, `LLMResponse`
 - `UPPER_CASE` for constants: `DEFAULT_MAX_ITERATIONS`
 - Private methods: underscore prefix: `_connect()`, `_validateToolCall()`
 
 ### File headers
 Every source file must start with:
-```javascript
+```typescript
 /*
  * @moleculer/agents
  * Copyright (c) 2026 MoleculerJS (https://github.com/moleculerjs/agents)
  * MIT Licensed
  */
-
-"use strict";
 ```
 
-### Module system
-- **CommonJS** (`require` / `module.exports`), NOT ES modules
+### Utility library
 - Use `lodash` for utility functions (`_.defaultsDeep`, `_.isString`, `_.isObject`, etc.)
+- Import as: `import _ from "lodash";`
 
-### JSDoc
-Add JSDoc comments to all public methods:
-```javascript
-/**
- * Execute the ReAct loop for a given task.
- *
- * @param {String} task - The task description
- * @param {String} [sessionId] - Optional session ID for conversation history
- * @returns {Promise<String>} The agent's final response
- */
-async runReActLoop(task, sessionId) { /* ... */ }
+### Types & Interfaces
+Define all shared types in `src/types.ts`:
+```typescript
+export interface LLMResponse {
+  content: string | null;
+  finish_reason: "stop" | "tool_calls";
+  tool_calls?: ToolCall[];
+}
+
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+export interface AgentSettings {
+  description: string;
+  instructions?: string;
+  llm: string;
+  memory?: boolean;
+  maxIterations?: number;
+  historyTtl?: number;
+  maxHistoryMessages?: number;
+  strategy?: "direct" | "llm-router";
+}
+
+export interface ToolSchema {
+  name: string;
+  description: string;
+  params: Record<string, unknown>;  // fastest-validator format
+}
 ```
 
 ### Mixin pattern
-Moleculer mixins are **factory functions** that return a schema object:
-```javascript
-module.exports = function AgentMixin(mixinOpts) {
+Moleculer mixins in this project are **factory functions** that return a schema object:
+```typescript
+import _ from "lodash";
+
+export default function AgentMixin(mixinOpts?: AgentMixinOptions) {
   mixinOpts = _.defaultsDeep(mixinOpts, {
     // defaults
   });
 
-  return {
+  const schema = {
     settings: { /* ... */ },
     actions: { /* ... */ },
     methods: { /* ... */ },
     created() { /* ... */ },
     async started() { /* ... */ }
   };
-};
+
+  return schema;
+}
 ```
 
-### Adapter pattern
-Adapters extend a base class:
-```javascript
-class OpenAIAdapter extends BaseAdapter {
-  constructor(opts) {
+### Abstract adapter class pattern
+```typescript
+export default abstract class BaseAdapter {
+  opts: Record<string, unknown>;
+  service?: unknown;
+  broker?: unknown;
+  logger?: unknown;
+
+  constructor(opts?: Record<string, unknown>) {
+    this.opts = opts || {};
+  }
+
+  init(service: unknown) {
+    this.service = service;
+    // ...
+  }
+
+  abstract chat(messages: unknown[], tools?: unknown[]): Promise<LLMResponse>;
+  abstract convertToolSchema(name: string, description: string, params: unknown): unknown;
+}
+```
+
+### Concrete adapter pattern (lazy-loading SDK)
+```typescript
+let OpenAI: unknown;
+
+export default class OpenAIAdapter extends BaseAdapter {
+  constructor(opts?: OpenAIAdapterOptions) {
     super(opts);
   }
 
-  init(service) {
+  init(service: unknown) {
     super.init(service);
     try {
-      OpenAI = require("openai");
+      OpenAI = require("openai");  // Dynamic require for lazy-loading
     } catch (err) {
-      this.broker.fatal(
+      (this as any).broker.fatal(
         "The 'openai' package is missing! Please install it with 'npm install openai --save' command.",
         err,
         true
@@ -427,21 +433,34 @@ class OpenAIAdapter extends BaseAdapter {
 }
 ```
 
+**Note on lazy-loading:** Even though the project uses ES modules, SDK lazy-loading uses `require()` (via `createRequire` from `node:module`) because dynamic `import()` is async and can't be used in synchronous `init()`. Follow the exact pattern from `moleculerjs/workflows`.
+
 ### Testing
-- **Jest** test framework
-- Unit tests: `test/unit/*.spec.js`
-- Integration tests: `test/integration/*.test.js`
+- **Vitest** test framework (NOT Jest)
+- Unit tests: `test/unit/*.spec.ts`
+- Integration tests: `test/integration/*.test.ts`
 - Use `ServiceBroker` with `{ logger: false }` in tests
 - Use `FakeAdapter` for tests — never call real LLM APIs in tests
-- Test naming: `describe("Test AgentMixin", () => { it("should ...", ...) })`
+- Test pattern:
+```typescript
+import { describe, expect, it } from "vitest";
+import { ServiceBroker } from "moleculer";
+
+describe("Test AgentMixin", () => {
+  it("should generate tool schemas from actions", () => {
+    // ...
+    expect(result).toEqual(expected);
+  });
+});
+```
 
 ### Error handling
 - Use `broker.fatal()` for missing dependencies (with install instructions)
 - Use Moleculer's built-in error classes where appropriate
-- Throw `Error("Max iterations reached")` when ReAct loop exceeds limit
+- Throw `new Error("Max iterations reached")` when ReAct loop exceeds limit
 
 ### Logging
-```javascript
+```typescript
 this.logger.debug("Tool schemas generated", { count: schemas.length });
 this.logger.info("Agent started", { name: this.name });
 this.logger.warn("Unsupported param type", { type, action: actionName });
@@ -454,11 +473,20 @@ this.logger.error("LLM call failed", err);
 # Install dependencies
 npm install
 
-# Run tests
+# Type check (no emit)
+npm run check
+
+# Run all tests
 npm test
 
-# Run tests in watch mode
-npm run test:watch
+# Run unit tests only
+npm run test:unit
+
+# Run integration tests only
+npm run test:integration
+
+# Build (CJS + ESM + types)
+npm run build
 
 # Lint
 npm run lint
@@ -467,7 +495,7 @@ npm run lint
 ## Streaming
 
 **NOT in MVP scope.** The client waits for the full ReAct loop to complete. If a call takes too long, increase the Moleculer action timeout:
-```javascript
+```typescript
 actions: {
   run: {
     timeout: 120000,  // 2 minutes
@@ -480,6 +508,7 @@ Streaming will be added in a future phase.
 
 ## What is NOT in scope
 
+- **OrchestratorMixin** — Phase 2
 - **MCP protocol support** — Handled by a separate package
 - **Vector store / long-term memory** — Future phase
 - **Agent monitoring dashboard** — Future phase
