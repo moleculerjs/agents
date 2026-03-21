@@ -5,10 +5,14 @@
  * The agent remembers previous messages in the same session.
  *
  * Run: npx tsx examples/multi-turn-chat.ts
+ *
+ * Set OPENAI_API_KEY or ANTHROPIC_API_KEY to use a real LLM,
+ * otherwise falls back to FakeAdapter with scripted responses.
  */
 
 import { ServiceBroker } from "moleculer";
-import { AgentMixin, MemoryMixin, LLMService, Adapters } from "../src/index.ts";
+import { AgentMixin, MemoryMixin, LLMService } from "../src/index.ts";
+import { createAdapter } from "./helpers/create-adapter.ts";
 
 const broker = new ServiceBroker({
 	logger: {
@@ -18,11 +22,9 @@ const broker = new ServiceBroker({
 	cacher: "Memory" // Required for MemoryMixin
 });
 
-// --- LLM service with scripted responses ---
-let callCount = 0;
-
-const fakeAdapter = new Adapters.Fake({
-	responses: [
+// --- LLM service ---
+const { adapter } = createAdapter({
+	fakeResponses: [
 		// First chat message response
 		"Hello! I'm your math assistant. What would you like to calculate?",
 		// Second message: LLM calls the "add" tool
@@ -50,7 +52,7 @@ const fakeAdapter = new Adapters.Fake({
 broker.createService({
 	name: "llm",
 	mixins: [LLMService()],
-	settings: { adapter: fakeAdapter }
+	settings: { adapter }
 });
 
 // --- Math agent with memory ---
@@ -61,7 +63,8 @@ broker.createService({
 	settings: {
 		agent: {
 			description: "Math assistant with memory",
-			instructions: "You are a helpful math assistant. Remember the context of the conversation.",
+			instructions:
+				"You are a helpful math assistant. Remember the context of the conversation.",
 			llm: "llm",
 			historyTtl: 600, // Remember for 10 minutes
 			maxHistoryMessages: 100

@@ -5,10 +5,14 @@
  * and forecasts using tool calling.
  *
  * Run: npx tsx examples/simple-agent.ts
+ *
+ * Set OPENAI_API_KEY or ANTHROPIC_API_KEY to use a real LLM,
+ * otherwise falls back to FakeAdapter with scripted responses.
  */
 
 import { ServiceBroker } from "moleculer";
-import { AgentMixin, LLMService, Adapters } from "../src/index.ts";
+import { AgentMixin, LLMService } from "../src/index.ts";
+import { createAdapter } from "./helpers/create-adapter.ts";
 
 // --- 1. Create broker ---
 const broker = new ServiceBroker({
@@ -18,9 +22,9 @@ const broker = new ServiceBroker({
 	}
 });
 
-// --- 2. Create LLM service with FakeAdapter (simulates OpenAI) ---
-const fakeAdapter = new Adapters.Fake({
-	responses: [
+// --- 2. Create LLM service ---
+const { adapter } = createAdapter({
+	fakeResponses: [
 		// First call: LLM decides to call the "getCurrent" tool
 		{
 			content: null,
@@ -44,9 +48,7 @@ const fakeAdapter = new Adapters.Fake({
 broker.createService({
 	name: "llm",
 	mixins: [LLMService()],
-	settings: {
-		adapter: fakeAdapter
-	}
+	settings: { adapter }
 });
 
 // --- 3. Create weather agent service ---
@@ -57,7 +59,8 @@ broker.createService({
 	settings: {
 		agent: {
 			description: "Weather assistant",
-			instructions: "You are a helpful weather assistant. Use the available tools to look up weather information.",
+			instructions:
+				"You are a helpful weather assistant. Use the available tools to look up weather information.",
 			llm: "llm"
 		}
 	},
@@ -87,7 +90,9 @@ broker.createService({
 				days: { type: "number", description: "Number of days (1-7)" }
 			},
 			handler(ctx) {
-				console.log(`  [Tool called] getForecast("${ctx.params.city}", ${ctx.params.days})`);
+				console.log(
+					`  [Tool called] getForecast("${ctx.params.city}", ${ctx.params.days})`
+				);
 				return {
 					city: ctx.params.city,
 					forecast: Array.from({ length: ctx.params.days }, (_, i) => ({
