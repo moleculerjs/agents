@@ -1,0 +1,43 @@
+{
+  "name": "@moleculer/agents",
+  "version": "0.1.0",
+  "description": "AI agent capabilities for the Moleculer microservices framework",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "jest --coverage",
+    "test:watch": "jest --watch",
+    "lint": "eslint src/ test/",
+    "lint:fix": "eslint src/ test/ --fix"
+  },
+  "keywords": [
+    "moleculer",
+    "microservices",
+    "ai",
+    "agent",
+    "llm",
+    "openai",
+    "anthropic",
+    "tool-calling",
+    "react-loop"
+  ],
+  "author": "MoleculerJS",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moleculerjs/agents.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "moleculer": "^0.14.0 || ^0.15.0"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "openai": "^4.0.0",
+    "@anthropic-ai/sdk": "^0.30.0",
+    "moleculer": "^0.14.35",
+    "jest": "^29.7.0",
+    "eslint": "^8.56.0"
+  }
+}
