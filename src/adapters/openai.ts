@@ -30,9 +30,7 @@ export default class OpenAIAdapter extends BaseAdapter {
 		super.init(service);
 
 		try {
-			// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-			// @ts-ignore - import.meta.url not available in CJS build
-			const req = createRequire(import.meta.url);
+			const req = createRequire(process.cwd() + "/");
 			OpenAI = req("openai");
 		} catch (err) {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any

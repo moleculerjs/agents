@@ -29,9 +29,7 @@ export default class AnthropicAdapter extends BaseAdapter {
 		super.init(service);
 
 		try {
-			// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-			// @ts-ignore
-			const req = createRequire(import.meta.url);
+			const req = createRequire(process.cwd() + "/");
 			AnthropicSDK = req("@anthropic-ai/sdk");
 		} catch (err) {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
