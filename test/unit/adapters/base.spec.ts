@@ -94,7 +94,6 @@ describe("Test Adapter Registry", () => {
 
 	it("should return BaseAdapter instance directly", () => {
 		const adapter = new TestAdapter({ key: "val" });
-		// @ts-expect-error testing with adapter instance
 		const resolved = Adapters.resolve(adapter);
 		expect(resolved).toBe(adapter);
 	});

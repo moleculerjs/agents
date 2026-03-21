@@ -11,7 +11,7 @@ const Adapters: Record<string, any> = {
 	Base: BaseAdapter
 };
 
-function resolve(opt?: string | Record<string, unknown>): BaseAdapter {
+function resolve(opt?: string | object): BaseAdapter {
 	if (typeof opt === "string") {
 		const AdapterClass = Adapters[opt];
 		if (!AdapterClass) {
