@@ -5,7 +5,8 @@ export default defineConfig({
 		globals: true,
 		coverage: {
 			provider: "v8",
-			include: ["src/**/*.ts"]
+			include: ["src/**/*.ts"],
+			exclude: ["src/index.ts", "src/types.ts"]
 		}
 	}
 });
