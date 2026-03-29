@@ -1,6 +1,6 @@
 {
 	"name": "@moleculer/agents",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "AI agent capabilities for the Moleculer microservices framework",
 	"type": "module",
 	"main": "./dist/cjs/index.js",
